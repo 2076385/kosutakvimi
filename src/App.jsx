@@ -565,10 +565,10 @@ const App = () => {
     <div className="app">
       <header className="hero">
         <div>
-          <p className="eyebrow">Kosu Takvimi</p>
-          <h1>Kosu Takvimi ve Basvuru Takibi</h1>
+          <p className="eyebrow">Marlin Running Team Kosu Takvimi</p>
+          <h1> Kosu Takvimi ve Takibi</h1>
           <p>
-            TeamRunBo takviminden yaris listesini cek, basvurularini
+            Takviminden yaris listesini cek, basvurularini
             isaretle ve bitis suresini dakika cinsinden kaydet.
           </p>
           <button className="primary" onClick={refreshCalendar}>
