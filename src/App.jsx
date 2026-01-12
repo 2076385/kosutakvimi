@@ -238,6 +238,17 @@ const App = () => {
   const [tab, setTab] = useState("all");
   const [showUpcomingOnly, setShowUpcomingOnly] = useState(false);
   const [view, setView] = useState("grid");
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    name: "",
+    dateStart: "",
+    distances: "",
+    location: "",
+    registered: true,
+    distanceChoice: "",
+    finishMinutes: "",
+    notes: "",
+  });
 
   const saveRegistrations = (updater) => {
     setRegistrations((prev) => {
@@ -318,17 +329,36 @@ const App = () => {
   }, [races]);
 
   const filteredRaces = useMemo(() => {
-    let list = races.filter((race) => {
-      if (!race.dateStart) {
-        return false;
-      }
-      return race.dateStart >= START_DATE;
-    });
-
-    list = list.filter((race) => isTurkeyRace(race));
+    let list = [];
 
     if (tab === "registered") {
-      list = list.filter((race) => registrations[race.id]?.registered);
+      // Start with races that are registered in the calendar
+      list = races.filter((race) => registrations[race.id]?.registered);
+
+      // Append manual registrations (stored only in registrations)
+      Object.entries(registrations).forEach(([id, reg]) => {
+        if (reg.registered && !races.some((r) => r.id === id)) {
+          list.push({
+            id,
+            name: reg.name || "Manuel yarış",
+            dateStart: reg.dateStart || "",
+            distances: reg.distances || reg.distanceChoice || "",
+            location: reg.location || "",
+            url: null,
+            notes: reg.notes || "",
+            type: "Manuel",
+          });
+        }
+      });
+    } else {
+      list = races.filter((race) => {
+        if (!race.dateStart) {
+          return false;
+        }
+        return race.dateStart >= START_DATE;
+      });
+
+      list = list.filter((race) => isTurkeyRace(race));
     }
 
     if (distanceFilter) {
@@ -353,7 +383,7 @@ const App = () => {
       });
     }
 
-    if (showUpcomingOnly) {
+    if (showUpcomingOnly && tab !== "registered") {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       list = list.filter((race) => {
@@ -363,7 +393,7 @@ const App = () => {
     }
 
     return list;
-  }, [races, tab, query, showUpcomingOnly, registrations, distanceFilter]);
+  }, [races, registrations, tab, query, showUpcomingOnly, distanceFilter]);
 
   const groupedRaces = useMemo(() => {
     const groups = new Map();
@@ -381,14 +411,17 @@ const App = () => {
   }, [filteredRaces]);
 
   const updateRegistration = (raceId, next) => {
-    saveRegistrations((prev) => ({
-      ...prev,
-      [raceId]: {
-        registered: next.registered,
-        finishMinutes: next.finishMinutes ?? "",
-        distanceChoice: next.distanceChoice ?? "",
-      },
-    }));
+    saveRegistrations((prev) => {
+      const prevEntry = prev[raceId] || {};
+      const merged = {
+        ...prevEntry,
+        ...next,
+        registered: next.registered ?? prevEntry.registered ?? false,
+        finishMinutes: next.finishMinutes ?? prevEntry.finishMinutes ?? "",
+        distanceChoice: next.distanceChoice ?? prevEntry.distanceChoice ?? "",
+      };
+      return { ...prev, [raceId]: merged };
+    });
   };
 
   const handleToggle = (raceId) => {
@@ -432,19 +465,62 @@ const App = () => {
     });
   };
 
+  const handleAddManual = (event) => {
+    if (event && event.preventDefault) event.preventDefault();
+    const id = `manual-${Date.now()}`;
+    saveRegistrations((prev) => ({
+      ...prev,
+      [id]: {
+        registered: !!manualForm.registered,
+        finishMinutes: manualForm.finishMinutes ?? "",
+        distanceChoice: manualForm.distanceChoice ?? "",
+        manual: true,
+        name: manualForm.name,
+        dateStart: manualForm.dateStart,
+        distances: manualForm.distances,
+        location: manualForm.location,
+        notes: manualForm.notes,
+      },
+    }));
+
+    setManualForm({
+      name: "",
+      dateStart: "",
+      distances: "",
+      location: "",
+      registered: true,
+      distanceChoice: "",
+      finishMinutes: "",
+      notes: "",
+    });
+    setShowManualForm(false);
+  };
+
+  const handleDeleteManual = (id) => {
+    saveRegistrations((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
   const handlePrint = () => {
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
     const rows = filteredRaces
-      .map(
-        (race) => `
+      .map((race) => {
+        const reg = registrations[race.id] || {};
+        const chosen = reg.distanceChoice || "";
+        const minutes = reg.finishMinutes || "";
+        return `
       <tr style="border-bottom: 1px solid #eee;">
         <td style="padding: 12px;">${race.name}</td>
         <td style="padding: 12px;">${getDateLabel(race)}</td>
-        <td style="padding: 12px;">${race.distances}</td>
-      </tr>`
-      )
+        <td style="padding: 12px;">${chosen}</td>
+        <td style="padding: 12px;">${minutes}</td>
+      </tr>`;
+      })
       .join("");
 
     printWindow.document.write(`
@@ -466,6 +542,7 @@ const App = () => {
                 <th>Yarış Adı</th>
                 <th>Tarih</th>
                 <th>Mesafe</th>
+                <th>Süre (dk)</th>
               </tr>
             </thead>
             <tbody>
@@ -576,7 +653,70 @@ const App = () => {
         >
           Basvurduklarim
         </button>
+        <button
+          className="tab"
+          onClick={() => setShowManualForm((s) => !s)}
+          type="button"
+          style={{ marginLeft: "8px" }}
+        >
+          Manuel Ekle
+        </button>
       </div>
+
+      {showManualForm ? (
+        <form onSubmit={handleAddManual} className="manual-form" style={{ marginTop: "12px", display: "grid", gap: "8px", gridTemplateColumns: "1fr 160px 160px auto", alignItems: "center" }}>
+          <input
+            placeholder="Yarış Adı"
+            required
+            value={manualForm.name}
+            onChange={(e) => setManualForm({ ...manualForm, name: e.target.value })}
+            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+          />
+          <input
+            type="date"
+            value={manualForm.dateStart}
+            onChange={(e) => setManualForm({ ...manualForm, dateStart: e.target.value })}
+            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+          />
+          <input
+            placeholder="Mesafeler (virgülle ayrılmış)"
+            value={manualForm.distances}
+            onChange={(e) => setManualForm({ ...manualForm, distances: e.target.value })}
+            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+          />
+          <input
+            placeholder="Yer (opsiyonel)"
+            value={manualForm.location}
+            onChange={(e) => setManualForm({ ...manualForm, location: e.target.value })}
+            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+          />
+          <label style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={manualForm.registered}
+              onChange={(e) => setManualForm({ ...manualForm, registered: e.target.checked })}
+            />
+            Kayıtlı olarak ekle
+          </label>
+          <input
+            placeholder="Başvurulan mesafe"
+            value={manualForm.distanceChoice}
+            onChange={(e) => setManualForm({ ...manualForm, distanceChoice: e.target.value })}
+            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+          />
+          <input
+            type="number"
+            placeholder="Süre (dk)"
+            value={manualForm.finishMinutes}
+            onChange={(e) => setManualForm({ ...manualForm, finishMinutes: e.target.value })}
+            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+          />
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button className="primary" type="submit">Ekle</button>
+            <button type="button" onClick={() => setShowManualForm(false)}>İptal</button>
+          </div>
+        </form>
+      ) : null}
 
       <section className="status">
         {sourceLabel ? <span>Kaynak: {sourceLabel}</span> : null}
@@ -608,34 +748,76 @@ const App = () => {
                 <tr style={{ borderBottom: "2px solid #ddd" }}>
                   <th style={{ padding: "12px" }}>Yarış Adı</th>
                   <th style={{ padding: "12px" }}>Tarih</th>
-                  <th style={{ padding: "12px" }}>Mesafe</th>
                   <th style={{ padding: "12px" }}>İşlem</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRaces.map((race) => (
-                  <tr key={race.id} style={{ borderBottom: "1px solid #eee" }}>
-                    <td style={{ padding: "12px" }}>
-                      {race.url ? (
-                        <a href={race.url} target="_blank" rel="noreferrer" style={{ fontWeight: "bold" }}>
-                          {race.name}
-                        </a>
-                      ) : (
-                        <span style={{ fontWeight: "bold" }}>{race.name}</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "12px" }}>{getDateLabel(race)}</td>
-                    <td style={{ padding: "12px" }}>{race.distances}</td>
-                    <td style={{ padding: "12px" }}>
-                      <button onClick={() => handleToggle(race.id)} style={{ cursor: "pointer", fontSize: "0.9em" }}>
-                        Listeden Çıkar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredRaces.map((race) => {
+                  const reg = registrations[race.id] || {};
+                  const distanceOptions = parseDistanceOptions(race.distances);
+                  return (
+                    <tr key={race.id} style={{ borderBottom: "1px solid #eee" }}>
+                      <td style={{ padding: "12px" }}>
+                        {race.url ? (
+                          <a href={race.url} target="_blank" rel="noreferrer" style={{ fontWeight: "bold" }}>
+                            {race.name}
+                          </a>
+                        ) : (
+                          <span style={{ fontWeight: "bold" }}>{race.name}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "12px" }}>{getDateLabel(race)}</td>
+                      <td style={{ padding: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
+                        {distanceOptions.length ? (
+                          <select
+                            value={reg.distanceChoice || ""}
+                            onChange={(e) => handleDistanceChange(race.id, e.target.value)}
+                            disabled={!reg.registered}
+                            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+                          >
+                            <option value="">-- Mesafe seçin --</option>
+                            {distanceOptions.map((d) => (
+                              <option key={d} value={d}>{d}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="Mesafe (ör: 10K)"
+                            value={reg.distanceChoice || ""}
+                            onChange={(e) => handleDistanceChange(race.id, e.target.value)}
+                            disabled={!reg.registered}
+                            style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc" }}
+                          />
+                        )}
+
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          step="1"
+                          placeholder="Süre (dk)"
+                          value={reg.finishMinutes || ""}
+                          onChange={(e) => handleFinishChange(race.id, e.target.value)}
+                          disabled={!reg.registered}
+                          style={{ padding: "8px", borderRadius: "4px", border: "1px solid #ccc", width: "100px" }}
+                        />
+
+                        <button onClick={() => handleToggle(race.id)} style={{ cursor: "pointer", fontSize: "0.9em" }}>
+                          Listeden Çıkar
+                        </button>
+                        {reg.manual ? (
+                          <button onClick={() => handleDeleteManual(race.id)} style={{ cursor: "pointer", fontSize: "0.9em", marginLeft: "8px", background: "#fff", border: "1px solid #ddd" }}>
+                            Sil
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
-            </div>
+            </div> 
           </div>
         ) : (
           view === "list" ? (
@@ -670,6 +852,11 @@ const App = () => {
                             <button onClick={() => handleToggle(race.id)} style={{ cursor: "pointer", fontSize: "0.9em" }}>
                               {isRegistered ? "Listeden Çıkar" : "Listeye Ekle"}
                             </button>
+                            {registrations[race.id]?.manual ? (
+                              <button onClick={() => handleDeleteManual(race.id)} style={{ cursor: "pointer", fontSize: "0.9em", marginLeft: "8px", background: "#fff", border: "1px solid #ddd" }}>
+                                Sil
+                              </button>
+                            ) : null}
                           </td>
                         </tr>
                       );
