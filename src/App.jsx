@@ -5,6 +5,7 @@ import {
   parseMarkdownCalendar,
   toDateValue,
 } from "./lib/raceParser";
+import teamRunboLogo from "./assets/team-runbo-logo.jpeg";
 
 const SOURCE_URL = "https://teamrunbo.com/yaristakvimimiz/";
 const MIRROR_URL = "https://r.jina.ai/http://teamrunbo.com/yaristakvimimiz/";
@@ -330,6 +331,8 @@ const App = () => {
 
   const filteredRaces = useMemo(() => {
     let list = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     if (tab === "registered") {
       // Start with races that are registered in the calendar
@@ -355,7 +358,11 @@ const App = () => {
         if (!race.dateStart) {
           return false;
         }
-        return race.dateStart >= START_DATE;
+        if (race.dateStart < START_DATE) {
+          return false;
+        }
+        const dateValue = toDateValue(race.dateStart);
+        return dateValue ? dateValue >= today : false;
       });
 
       list = list.filter((race) => isTurkeyRace(race));
@@ -384,8 +391,6 @@ const App = () => {
     }
 
     if (showUpcomingOnly && tab !== "registered") {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
       list = list.filter((race) => {
         const dateValue = toDateValue(race.dateStart);
         return dateValue ? dateValue >= today : false;
@@ -565,7 +570,10 @@ const App = () => {
     <div className="app">
       <header className="hero">
         <div>
-          <p className="eyebrow">Marlin Running Team Kosu Takvimi</p>
+          <div className="brand">
+            <img src={teamRunboLogo} alt="Team RunBo logo" />
+          </div>
+          <p className="eyebrow">Team RunBo Koşu Takvimi</p>
           <h1> Kosu Takvimi ve Takibi</h1>
           <p>
             Takviminden yaris listesini cek, basvurularini

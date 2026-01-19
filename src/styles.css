@@ -84,6 +84,22 @@ a:hover {
   animation: floatIn 0.7s ease-out;
 }
 
+.brand {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+
+.brand img {
+  display: block;
+  max-width: 240px;
+  height: auto;
+}
+
 .eyebrow {
   font-size: 0.9rem;
   text-transform: uppercase;
@@ -471,6 +487,10 @@ button.primary:hover {
   .controls {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .brand img {
+    max-width: 200px;
   }
 
   .tabs {
