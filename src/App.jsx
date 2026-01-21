@@ -161,40 +161,12 @@ const sourceLabelMap = {
   cache: "yerel onbellek",
 };
 
-const getMonthKey = (race) => {
-  if (!race.dateStart) {
-    return "unknown";
-  }
-
-  const date = new Date(`${race.dateStart}T00:00:00`);
-  if (Number.isNaN(date.getTime())) {
-    return "unknown";
-  }
-
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth() + 1;
-  return `${year}-${String(month).padStart(2, "0")}`;
-};
-
-const getMonthLabel = (key) => {
-  if (key === "unknown") {
-    return "Tarih belirsiz";
-  }
-
-  const [year, month] = key.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, 1));
-  const label = date.toLocaleDateString("tr-TR", {
-    month: "long",
-    year: "numeric",
-  });
-  return label.charAt(0).toUpperCase() + label.slice(1);
-};
-
 const toComparable = (value) =>
   (value || "")
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i")
     .trim();
 
 const isTurkeyRace = (race) => {
@@ -223,6 +195,22 @@ const parseDistanceOptions = (distances) => {
   return Array.from(new Set(items));
 };
 
+const TYPE_LABELS = {
+  road: "🛣️ Yol Koşuları",
+  trail: "🌲🏔️ Patika Koşuları, Dağ Yarışları",
+  bike: "🚵‍♂️ Bisiklet",
+  swim: "🏊‍♀️ Yüzme",
+  orienteering: "🧭 Oryantiring, Macera Yarışları",
+};
+
+const getTypeLabel = (race) => {
+  const raw = (race && race.type ? race.type : "").trim();
+  if (!raw) {
+    return "Yaris";
+  }
+  return TYPE_LABELS[raw] || raw;
+};
+
 const App = () => {
   const [races, setRaces] = useState(() => loadJson(CACHE_KEY, []));
   const [status, setStatus] = useState(races.length ? "idle" : "loading");
@@ -236,6 +224,7 @@ const App = () => {
   );
   const [query, setQuery] = useState("");
   const [distanceFilter, setDistanceFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
   const [tab, setTab] = useState("all");
   const [showUpcomingOnly, setShowUpcomingOnly] = useState(false);
   const [view, setView] = useState("grid");
@@ -329,6 +318,29 @@ const App = () => {
     });
   }, [races]);
 
+  const availableTypes = useMemo(() => {
+    const map = new Map();
+    const addType = (label) => {
+      const safeLabel = (label || "").trim() || "Yaris";
+      const key = toComparable(safeLabel);
+      if (!map.has(key)) {
+        map.set(key, safeLabel);
+      }
+    };
+
+    Object.values(TYPE_LABELS).forEach(addType);
+
+    races.forEach((race) => addType(getTypeLabel(race)));
+
+    Object.values(registrations).forEach((reg) => {
+      if (reg.manual) {
+        addType("Manuel");
+      }
+    });
+
+    return Array.from(map.values());
+  }, [races, registrations]);
+
   const filteredRaces = useMemo(() => {
     let list = [];
     const today = new Date();
@@ -375,6 +387,13 @@ const App = () => {
       });
     }
 
+    if (typeFilter) {
+      const normalizedType = toComparable(typeFilter);
+      list = list.filter(
+        (race) => toComparable(getTypeLabel(race)) === normalizedType
+      );
+    }
+
     const normalizedQuery = query.trim().toLowerCase();
     if (normalizedQuery) {
       list = list.filter((race) => {
@@ -398,21 +417,31 @@ const App = () => {
     }
 
     return list;
-  }, [races, registrations, tab, query, showUpcomingOnly, distanceFilter]);
+  }, [
+    races,
+    registrations,
+    tab,
+    query,
+    showUpcomingOnly,
+    distanceFilter,
+    typeFilter,
+  ]);
 
-  const groupedRaces = useMemo(() => {
+  const groupedByType = useMemo(() => {
     const groups = new Map();
 
     filteredRaces.forEach((race) => {
-      const key = getMonthKey(race);
-      const label = getMonthLabel(key);
+      const label = getTypeLabel(race);
+      const key = toComparable(label) || label || "yaris";
       if (!groups.has(key)) {
         groups.set(key, { key, label, races: [] });
       }
       groups.get(key).races.push(race);
     });
 
-    return Array.from(groups.values());
+    return Array.from(groups.values()).sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
+    );
   }, [filteredRaces]);
 
   const updateRegistration = (raceId, next) => {
@@ -620,6 +649,18 @@ const App = () => {
             ))}
           </select>
         </div>
+        <div>
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            style={{ padding: "10px", borderRadius: "4px", border: "1px solid #ccc" }}
+          >
+            <option value="">Tum kosu tipleri</option>
+            {availableTypes.map((type) => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </select>
+        </div>
         <label className="toggle">
           <input
             type="checkbox"
@@ -742,7 +783,7 @@ const App = () => {
         <div className="notice loading">Takvim yukleniyor...</div>
       ) : null}
 
-      {groupedRaces.length ? (
+      {filteredRaces.length ? (
         tab === "registered" ? (
           <div className="registered-container" style={{ marginTop: "20px" }}>
             <div style={{ textAlign: "right", marginBottom: "10px" }}>
@@ -841,7 +882,17 @@ const App = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredRaces.map((race) => {
+                    {groupedByType.flatMap((group) => {
+                      return [
+                        <tr
+                          key={`type-${group.key}`}
+                          style={{ background: "rgba(42, 157, 143, 0.08)", fontWeight: "600" }}
+                        >
+                          <td colSpan={4} style={{ padding: "10px 12px" }}>
+                            {group.label} ({group.races.length} yaris)
+                          </td>
+                        </tr>,
+                        ...group.races.map((race) => {
                       const isRegistered = registrations[race.id]?.registered;
                       return (
                         <tr key={race.id} style={{ borderBottom: "1px solid #eee" }}>
@@ -868,6 +919,8 @@ const App = () => {
                           </td>
                         </tr>
                       );
+                        }),
+                      ];
                     })}
                   </tbody>
                 </table>
@@ -875,7 +928,7 @@ const App = () => {
             </div>
           ) : (
             <div className="month-groups">
-              {groupedRaces.map((group) => (
+              {groupedByType.map((group) => (
                 <section className="month-group" key={group.key}>
                   <div className="month-header">
                     <div>
@@ -892,7 +945,7 @@ const App = () => {
                         finishMinutes: "",
                         distanceChoice: "",
                       };
-                      const typeLabel = race.type || "Yaris";
+                      const typeLabel = getTypeLabel(race);
                       const distanceOptions = parseDistanceOptions(race.distances);
                       const distanceListId = `distance-${race.id}`;
 

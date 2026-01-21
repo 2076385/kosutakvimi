@@ -32,7 +32,147 @@ const toComparable = (value) =>
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i")
     .trim();
+
+const TYPE_KEYS = {
+  road: "road",
+  trail: "trail",
+  bike: "bike",
+  swim: "swim",
+  orienteering: "orienteering",
+};
+
+const TYPE_TEXT_RULES = [
+  { regex: /\u{1F6E3}/u, key: TYPE_KEYS.road },
+  { regex: /[\u{1F333}\u{1F30B}]/u, key: TYPE_KEYS.trail },
+  { regex: /\u{1F6B5}/u, key: TYPE_KEYS.bike },
+  { regex: /\u{1F3CA}/u, key: TYPE_KEYS.swim },
+  { regex: /\u{1F9ED}/u, key: TYPE_KEYS.orienteering },
+];
+
+const extractEmojiCodeFromUrl = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  const match = value.match(/([0-9a-fA-F-]+)(?:\.\w+)?$/);
+  return match ? match[1].toLowerCase() : "";
+};
+
+const matchTypeKeyFromEmojiCode = (code) => {
+  if (!code) {
+    return "";
+  }
+
+  if (code.startsWith("1f6e3")) {
+    return TYPE_KEYS.road;
+  }
+  if (code.startsWith("1f333") || code.startsWith("1f30b")) {
+    return TYPE_KEYS.trail;
+  }
+  if (code.startsWith("1f6b5")) {
+    return TYPE_KEYS.bike;
+  }
+  if (code.startsWith("1f3ca")) {
+    return TYPE_KEYS.swim;
+  }
+  if (code.startsWith("1f9ed")) {
+    return TYPE_KEYS.orienteering;
+  }
+
+  return "";
+};
+
+const matchTypeKeyFromText = (value) => {
+  const text = normalizeText(value);
+  if (!text) {
+    return "";
+  }
+
+  for (const rule of TYPE_TEXT_RULES) {
+    if (rule.regex.test(text)) {
+      return rule.key;
+    }
+  }
+
+  const normalized = toComparable(text);
+  if (normalized.includes("yol")) {
+    return TYPE_KEYS.road;
+  }
+  if (normalized.includes("patika") || normalized.includes("dag")) {
+    return TYPE_KEYS.trail;
+  }
+  if (
+    normalized.includes("bisiklet") ||
+    normalized.includes("bike") ||
+    normalized.includes("cycling")
+  ) {
+    return TYPE_KEYS.bike;
+  }
+  if (normalized.includes("yuzme") || normalized.includes("swim")) {
+    return TYPE_KEYS.swim;
+  }
+  if (normalized.includes("oryantiring") || normalized.includes("macera")) {
+    return TYPE_KEYS.orienteering;
+  }
+
+  return "";
+};
+
+const extractTypeKeyFromImageUrls = (urls) => {
+  if (!urls || !urls.length) {
+    return "";
+  }
+
+  for (const url of urls) {
+    const code = extractEmojiCodeFromUrl(url);
+    const key = matchTypeKeyFromEmojiCode(code);
+    if (key) {
+      return key;
+    }
+  }
+
+  return "";
+};
+
+const resolveTypeKey = ({ text, imageUrls = [], imageAlts = [] }) => {
+  const fromText = matchTypeKeyFromText(text);
+  if (fromText) {
+    return fromText;
+  }
+
+  for (const alt of imageAlts) {
+    const fromAlt = matchTypeKeyFromText(alt);
+    if (fromAlt) {
+      return fromAlt;
+    }
+  }
+
+  const fromImages = extractTypeKeyFromImageUrls(imageUrls);
+  if (fromImages) {
+    return fromImages;
+  }
+
+  return "";
+};
+
+const extractMarkdownImageUrls = (text) => {
+  if (!text) {
+    return [];
+  }
+
+  const urls = [];
+  const regex = /!\[[^\]]*\]\(([^)]+)\)/g;
+  let match = regex.exec(text);
+
+  while (match) {
+    urls.push(match[1]);
+    match = regex.exec(text);
+  }
+
+  return urls;
+};
 
 const extractFirstLink = (text) => {
   const match = text.match(/\[([^\]]+)\]\(([^)]+)\)/);
@@ -96,12 +236,32 @@ const buildRace = ({ type, name, dateText, location, distances, notes, url }) =>
   };
 };
 
-const shouldIncludeRow = ({ name, dateText }) => {
+const isHeaderRow = ({ type, name, dateText }) => {
+  const typeLabel = toComparable(type);
+  const nameLabel = toComparable(name);
+  const dateLabel = toComparable(dateText);
+
+  if (typeLabel === "yaris tipi" && nameLabel === "yaris adi") {
+    return true;
+  }
+
+  if (nameLabel === "yaris adi" && dateLabel === "tarih") {
+    return true;
+  }
+
+  return false;
+};
+
+const shouldIncludeRow = ({ type, name, dateText }) => {
   if (!name || !name.trim()) {
     return false;
   }
 
   if (!dateText || !dateText.trim()) {
+    return false;
+  }
+
+  if (isHeaderRow({ type, name, dateText })) {
     return false;
   }
 
@@ -146,7 +306,17 @@ export const parseHtmlCalendar = (html) => {
       return;
     }
 
-    const type = cells[0].textContent || "";
+    const typeCell = cells[0];
+    const typeKey = resolveTypeKey({
+      text: typeCell.textContent || "",
+      imageUrls: Array.from(typeCell.querySelectorAll("img")).map((img) =>
+        img.getAttribute("src")
+      ),
+      imageAlts: Array.from(typeCell.querySelectorAll("img")).map((img) =>
+        img.getAttribute("alt")
+      ),
+    });
+    const type = typeKey || typeCell.textContent || "";
     const nameCell = cells[1];
     const link = nameCell.querySelector("a");
     const name = link ? link.textContent : nameCell.textContent;
@@ -156,7 +326,7 @@ export const parseHtmlCalendar = (html) => {
     const distances = cells[4].textContent || "";
     const notes = cells[5].textContent || "";
 
-    if (!shouldIncludeRow({ name, dateText })) {
+    if (!shouldIncludeRow({ type, name, dateText })) {
       return;
     }
 
@@ -221,7 +391,11 @@ export const parseMarkdownCalendar = (markdown) => {
       columns;
 
     const nameLink = extractFirstLink(nameRaw || "");
-    const type = normalizeText(typeRaw);
+    const typeKey = resolveTypeKey({
+      text: typeRaw || "",
+      imageUrls: extractMarkdownImageUrls(typeRaw || ""),
+    });
+    const type = typeKey || normalizeText(typeRaw);
     const name = nameLink.text || normalizeText(nameRaw);
     const url = nameLink.url;
     const dateText = normalizeText(dateTextRaw || "");
@@ -229,7 +403,7 @@ export const parseMarkdownCalendar = (markdown) => {
     const distances = normalizeText(distancesRaw || "");
     const notes = normalizeText(notesRaw || "");
 
-    if (!shouldIncludeRow({ name, dateText })) {
+    if (!shouldIncludeRow({ type, name, dateText })) {
       return;
     }
 
